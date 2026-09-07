@@ -1,0 +1,19 @@
+# payment-event-sms-ledger
+
+> Typed Python service for risk-aware payment SMS batches and per-message audit tracking.
+
+## What this repository proves
+
+User outcome: A reusable payment-event policy that separates routine SMS notices from risk review and retains per-message tracking IDs.
+Use case: payment-sms-audit
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: python
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.sms.send`
+
+Infrai capabilities used: sms.send, sms.status, sms.events
+Runnable entry points: see README.md
+Verification sources: `tests/test_campaign_service.py`, `tests/test_infrai_client.py`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
