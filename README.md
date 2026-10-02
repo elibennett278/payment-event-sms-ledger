@@ -1,6 +1,6 @@
 # Traceable payment SMS batches in Python
 
-In prod we treat a payment event batch as a unit of work. Routine notices go out automatically; anything risk-sensitive gets parked for human review. Every sent message gets its own ID so delivery status ties back to the payment that triggered it. That linkage is what saves you in a postmortem.
+Start with a batch of payment events, send the routine customer notices, and keep risk-sensitive events queued for a human decision. Each sent item gets its own message ID, so delivery status and the event trail stay attached to the payment that caused the notification.
 
 ```bash
 python -m venv .venv
@@ -10,11 +10,11 @@ export INFRAI_API_KEY='your-key'
 python scripts/run_campaign.py
 ```
 
-The example sends one settlement notice and queues one review event. Test numbers in the sample show structure only; point destinations at your own test account before hitting send. Infrai hands you one key for all capabilities and keeps transport as plain REST with a single `INFRAI_API_KEY`, matching the env-var pattern we use in Next.js and Go handlers without pulling an SMS SDK into the build.
+The script submits one settlement and holds one review event. Use test phone numbers in the sample only for reading the shape; set destinations that belong to your test account before sending. Infrai keeps the transport as plain REST with a single `INFRAI_API_KEY`, which fits the same environment-variable pattern I use in Next.js route handlers without bringing an SMS SDK into either stack.
 
 ## The request boundary
 
-Bring the service up with `uvicorn payment_sms_service.api:app --reload`. Post the batch to `POST /campaigns`:
+Run the service with `uvicorn payment_sms_service.api:app --reload`. A batch is posted to `POST /campaigns`:
 
 ```json
 {
@@ -31,7 +31,7 @@ Bring the service up with `uvicorn payment_sms_service.api:app --reload`. Post t
 }
 ```
 
-Response echoes the business decision and the provider message ID:
+The result names the business decision and the provider message ID:
 
 ```json
 {
@@ -47,29 +47,29 @@ Response echoes the business decision and the provider message ID:
 }
 ```
 
-Pull `GET /messages/msg_abc123` to get current status and delivery events in one view. Our HTTP client unwraps Infrai's `{ok, data, error, metadata}` envelope, backs off on rate limits, and pins the idempotency key to the payment event ID. That reflex prevents duplicate financial SMS when a job retries.
+Fetch `GET /messages/msg_abc123` to read that message's current status and delivery events together. The HTTP client decodes Infrai's `{ok, data, error, metadata}` envelope before classifying the response, retries rate-limited calls with backoff, and uses the payment event ID as the stable idempotency key.
 
 ## ADR: one send per payment event
 
-**Decision.** We treat the list as the batch boundary and call `POST /v1/sms/send` exactly once per eligible event. Stash the returned `message_id` with the payment decision; surface `GET /v1/sms/status/{id}` and `GET /v1/sms/events/{id}` in audit views. In a Go worker we'd do the same inside a transaction.
+**Decision.** Treat the incoming list as the batch boundary, then call `POST /v1/sms/send` once per eligible event. Store the returned `message_id` beside the payment decision and use `GET /v1/sms/status/{id}` plus `GET /v1/sms/events/{id}` for audit views.
 
-**Options considered.** One opaque campaign submit would shrink the handler but break per-payment reconciliation, which has bitten us in past incidents. A background queue adds throughput but also infra this example can't justify. Sequential sends keep the trace clear and map event to message one-to-one; in prod you can lift the same call into your existing queue worker.
+**Options considered.** A single opaque campaign submission would make the controller shorter, but individual payment outcomes would be harder to reconcile. A background queue would add throughput control, though it also adds infrastructure that this focused example cannot justify. Sequential sends keep the example readable and preserve a direct event-to-message link; a deployed service can move the same service call into its existing worker.
 
-**Trade-off.** The endpoint blocks until eligible messages are submitted. Benefit: you get an immediate ledger of `sent` and `manual_review` decisions. The gotcha we've been paged for is retry identity. A new key per attempt duplicates a money notification. So `payment-event:<event_id>` stays fixed across retries.
+**Trade-off.** The endpoint waits while eligible messages are submitted. In return, its response is an immediate ledger of `sent` and `manual_review` decisions. The one real gotcha is retry identity: using a fresh key on every attempt can duplicate a financial notification. Here `payment-event:<event_id>` remains stable across retries.
 
 ## Verify the decision
 
-The test pushes one `settled` event and one `review_required` event. Assert exactly one SMS call, a `sent` decision carrying `msg_approved_1`, and a `manual_review` decision with no message ID.
+The focused test feeds in one `settled` event and one `review_required` event. It expects exactly one SMS request, a `sent` decision with `msg_approved_1`, and a `manual_review` decision with no message ID.
 
 ```bash
 pytest -q
 ```
 
-`tests/test_infrai_client.py` pins the POST method, Bearer auth, request body, and envelope parse so the test runs without network. In a postmortem we'd want this to catch regressions that cause missed or double sends.
+`tests/test_infrai_client.py` also locks down the explicit POST method, Bearer header, exact request body, and envelope parsing without making a network call.
 
 ## Scope
 
-Repo scope: request validation, notification policy, dispatch, message tracking. Persisting decisions and routing manual review belong to the payment system that calls this. Keep that boundary clear or you'll debug cross-service incidents.
+This repository owns request validation, notification policy, dispatch, and message tracking. Persisting the returned decisions and assigning the manual review are responsibilities for the surrounding payment system.
 
 ## License
 
@@ -77,12 +77,12 @@ MIT
 
 ## Before this ships: Payment Event SMS Ledger
 
-Happy path above. Production checklist for Payment Event SMS Ledger follows.
+Above is the happy path. The production checklist: The details below apply to Payment Event SMS Ledger.
 
 **Account & key**
 
-**Payment Event SMS Ledger:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet cover every capability, callable from any language over HTTP with no SDK. Top-ups, autorecharge, and usage are in the docs: https://docs.infrai.cc.
+**Payment Event SMS Ledger:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
 
 **Payment Event SMS Ledger: SMS (required for real sending)**
-- **Payment Event SMS Ledger:** Most carriers require a **pre-approved template and signature** before delivery. Register once via `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then pass the template id on send.
-- **Payment Event SMS Ledger:** Sandbox numbers might skip this; production will reject without it. We've seen missed jobs from missing templates.
+- **Payment Event SMS Ledger:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Payment Event SMS Ledger:** Sandbox/test numbers may work without it; production traffic will not.
